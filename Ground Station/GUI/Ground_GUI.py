@@ -1,7 +1,6 @@
 # Required libraries
 import sys
 import csv
-import os
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -11,20 +10,33 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QComboBox,
-    QLabel
+    QLabel,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QToolButton, 
+    QWidgetAction,
+    QSizePolicy
 )
 from PySide6.QtCore import (
     Qt
 )
 from PySide6.QtGui import (
-    QAction
+    QAction,
+    QIcon
 )
 import  Serial.Ground_serial as sr
 
+
+
+##################################################################################################################################################################
+# START GUI
+##################################################################################################################################################################
+
 # Error Window pop-up, only displays an error message and a button to close it
-class ErrorWindow(QWidget):
-    def __init__(self, err_msg):
-        super().__init__()
+class ErrorWindow(QDialog):
+    def __init__(self, parent, err_msg):
+        super().__init__(parent)
 
         #Set layout and Title
         self.setWindowTitle("Error")
@@ -40,6 +52,32 @@ class ErrorWindow(QWidget):
         # Add Widgits to window
         layout.addWidget(msg)
         layout.addWidget(ok)
+
+class OpenCSV(QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+
+        # Set Layout and title
+        self.setWindowTitle("Open CSV File")
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+
+        # Ok and Quit buttons
+        ok_quit_buttons = (
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        ) 
+        self.buttonBox = QDialogButtonBox(ok_quit_buttons)
+        self.buttonBox.accepted.connect(self.accept)
+        self.buttonBox.rejected.connect(self.reject)
+
+        # Open file dialog to select an existing CSV file
+        file_path, _ = QFileDialog.getOpenFileName(self, "Open CSV File", "", "CSV Files (*.csv)")
+        if file_path:
+            self.selected_file = file_path
+            self.label.setText(f"Selected File: {file_path}")
+
+        # Init Widgits
+        layout.addWidget(self.buttonBox)
 
 
 # Setup Window, called from show_setup_window, allows user to select COM port and baud rate
@@ -61,7 +99,7 @@ class SetupWindow(QWidget):
         self.port_select.addItems(items_port)
         
         self.baud_select = QComboBox()
-        self.baud_select.addItems(['', '1200', '1800', '2400', '4800', '9600', '19200', '115200'])
+        self.baud_select.addItems([0, 1200, 1800, 2400, 4800, 9600, 19200, 115200])
 
         # Init Confirm Button
         confirm_button = QPushButton("Confirm", parent=self)
@@ -80,14 +118,14 @@ class SetupWindow(QWidget):
     def confirm_port_and_baud(self):
         #print(self.port_select.currentText(), self.baud_select.currentText())     # Debugging Line
         if self.port_select.currentText() == '' and self.baud_select.currentText() != '':
-            self.error_window = ErrorWindow("Please select a COM port.")
-            self.error_window.show()
+            self.error_window = ErrorWindow(self, "Please select a COM port.")
+            self.error_window.exec()
         elif self.baud_select.currentText() == '' and self.port_select.currentText() != '':
-            self.error_window = ErrorWindow("Please select a baud rate.")
-            self.error_window.show()
+            self.error_window = ErrorWindow(self, "Please select a baud rate.")
+            self.error_window.exec()
         elif self.port_select.currentText() == '' and self.baud_select.currentText() == '':
-            self.error_window = ErrorWindow("Please select a COM port and baud rate")
-            self.error_window.show()
+            self.error_window = ErrorWindow(self, "Please select a COM port and baud rate")
+            self.error_window.exec()
         else:
             MainWindow.opened_port = self.port_select.currentText()
             MainWindow.baud_number = self.baud_select.currentText()
@@ -132,8 +170,23 @@ class GraphPlaceholder(QWidget):
 # Main Window
 class MainWindow(QMainWindow):
     # Shared Variables
-    opened_port = ""
-    baud_number = ""
+    opened_port = "" 
+    baud_number = 0
+
+    # Graphed Data
+    team_id = 1004
+    mission_time = []
+    packet_count = []
+    sw_state = []
+    pl_state = []
+    altitude = []
+    temp = []
+    voltage = []
+    gps_latitude = []
+    gps_longitude = []
+
+    # Current csv file
+    csv_filepath = ""
 
     def __init__(self):
         super().__init__()
@@ -176,13 +229,17 @@ class MainWindow(QMainWindow):
         exit_action = QAction("Exit", self)
         exit_action.triggered.connect(self.close)
 
+        create_file = QAction("Create", self)
+        create_file.triggered.connect(self.create_csv)
+
         open_file = QAction("Open", self)       # Setup to open CSV for the live graphs
-        open_file.triggered.connect(self.open_csv)           # Finish in a bit, not finished
+        open_file.triggered.connect(self.open_csv)
 
         close_file = QAction("Close", self)     # Setup to close CSV for the live graphs
-        close_file.triggered.connect(self.close_csv)          # Finish in a bit, not finished
+        close_file.triggered.connect(self.close_csv)
 
         file_menu.addAction(exit_action)
+        file_menu.addAction(create_file)
         file_menu.addAction(open_file)
         file_menu.addAction(close_file)
 
@@ -198,6 +255,23 @@ class MainWindow(QMainWindow):
         status_action.triggered.connect(self.show_status_message)
         status_menu.addAction(status_action)
 
+        # Add a spacer to push the run button to the right
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        menu_bar.setCornerWidget(spacer, Qt.TopRightCorner)
+
+        # Create a Play button with an icon
+        play_button = QToolButton(self)
+        play_button.setIcon(QIcon("GUI\\run_button.png"))  # Use your play icon here
+        play_button.setToolTip("Play")
+        play_button.clicked.connect(self.main_program_loop)
+
+        # Add the play button to the menu bar using QWidgetAction
+        play_action = QWidgetAction(self)
+        play_action.setDefaultWidget(play_button)
+
+        menu_bar.addAction(play_action)
+
     # Called from create_menu_bar, creates a SetupWindow instance
     def show_setup_window(self):
         self.setup_window = SetupWindow("Setup", sr.return_com_ports())
@@ -208,13 +282,59 @@ class MainWindow(QMainWindow):
         self.status_window = StatusWindow("Status")
         self.status_window.show()
 
+    def create_csv(self):
+         # Open file dialog to create a new CSV file
+         file_path, _ = QFileDialog.getSaveFileName(self, "Create CSV File", "", "CSV Files (*.csv)")
+         if file_path:
+            self.selected_file = file_path
+            # Optionally, you could create the file here
+            with open(file_path, 'w') as file:
+                file.write("TEAM_ID,MISSION_TIME,PACKET_COUNT,SW_STATE,PL_STATE,ALTITUDE,TEMP,VOLTAGE,GPS_LATITUDE,GPS_LONGITUDE\n")  # Writing a header for the CSV
+
     # Function to open csv file, called by the open file action in menu bar
-    def open_csv(self, file_name):
-        return      # Finish when live graphing is finished
+    def open_csv(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Open CSV File", "", "CSV Files (*.csv)")
+        if file_path:
+            self.csv_filepath = file_path
+
+         # Read the CSV content
+        with open(file_path, newline='', encoding='utf-8') as csvfile:
+            csv_reader = csv.reader(csvfile)
+            
+            # Iterate over the rows in the CSV file
+            for row in csv_reader:
+                if len(row) >= 10:  # Ensure the row has at least 5 columns
+                    MainWindow.mission_time.append(row[1])     # Column 1
+                    MainWindow.packet_count.append(row[2])     # Column 2
+                    MainWindow.sw_state.append(row[3])  # Column 3
+                    MainWindow.pl_state.append(row[4])      # Column 4
+                    MainWindow.altitude.append(row[5])         # Column 5
+                    MainWindow.temp.append(row[6])         # Column 6
+                    MainWindow.voltage.append(row[7])         # Column 7
+                    MainWindow.gps_latitude.append(row[8])         # Column 8
+                    MainWindow.gps_longitude.append(row[9])     # Column 9
+
     
     # Function to close csv file, called by the close file action in menu bar
-    def close_csv(self, file_name):
-        return      # Finish when live graphing is finished
+    def close_csv(self):
+        MainWindow.csv_filepath = ''
+        MainWindow.mission_time = []
+        MainWindow.packet_count = []
+        MainWindow.sw_state = []
+        MainWindow.pl_state = []
+        MainWindow.altitude = []
+        MainWindow.temp = []
+        MainWindow.voltage = []
+        MainWindow.gps_latitude = []
+        MainWindow.gps_longitude = []
+
+    def main_program_loop():
+        return
+
+    
+##################################################################################################################################################################
+# END GUI
+##################################################################################################################################################################
 
 
 if __name__ == "__main__":

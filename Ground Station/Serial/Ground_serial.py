@@ -7,18 +7,17 @@ import serial.tools
 import serial.tools.list_ports
 
 def return_com_ports():
-    return ["COM3", "COM4", "COM5"]     # Will be replaced with actual list of comports
 
     # Get a list of all COM ports
-    #ports = serial.tools.list_ports.comports()
+    ports = serial.tools.list_ports.comports()
     
     # Extract the port names
-    #com_ports = [port.device for port in ports]
+    com_ports = [port.device for port in ports]
     
-    #return com_ports
+    return com_ports
 
 class DataReader:
-    def __init__(self, port, baudrate):
+    def __init__(self, port, baudrate, csv_file):
         self.serial_port = serial.Serial(port, baudrate, timeout=1)
         self.data = {
             "altitude": None,
@@ -31,9 +30,14 @@ class DataReader:
         self.running = True
         self.stop_event = Event()
          # Open CSV file for writing
-        self.csv_file = open('sensor_data.csv', 'w', newline='')
-        self.csv_writer = csv.DictWriter(self.csv_file, fieldnames=self.data.keys())
-        self.csv_writer.writeheader("TeamID", "Altitude", "Pressure", "Temperature", "Voltage", "Timestamp", "Packet Count")  # Write header to CSV
+        self.csv_file = csv_file
+        
+
+    def init_csv(csv_file):
+        csv_file = open(csv_file, 'w', newline='')
+        csv_writer = csv.DictWriter(csv_file, fieldnames=csv_file.data.keys())
+        csv_writer.writeheader("TeamID", "Altitude", "Pressure", "Temperature", "Voltage", "Timestamp", "Packet Count")  # Write header to CSV
+        return
 
     def read_data(self):
         while self.running:
