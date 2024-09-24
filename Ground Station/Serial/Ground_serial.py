@@ -1,11 +1,12 @@
+# Required libraries
 import serial
 import time
-import csv
 from threading import Thread, Event
-
+import csv
 import serial.tools
 import serial.tools.list_ports
 
+######################### Returns com ports connected to computer #########################
 def return_com_ports():
 
     # Get a list of all COM ports
@@ -16,30 +17,47 @@ def return_com_ports():
     
     return com_ports
 
+
+##################################################################################################################################
+#   DataReader Class
+##################################################################################################################################
+
 class DataReader:
     def __init__(self, port, baudrate, csv_file):
-        self.serial_port = serial.Serial(port, baudrate, timeout=1)
+        try:
+            self.serial_port = serial.Serial(port, baudrate, timeout=1)
+        except serial.SerialException as e:
+            print(f"Error opening serial port: {e}") # Change this later to return faulty port/connection
+
+        # Initializes data dictionary
         self.data = {
+            "TeamID": 1004,
+            "mission time": None,
+            "packet count": None,
+            "sw state": None,
+            "pl state": None,
             "altitude": None,
             "pressure": None,
             "temperature": None,
             "voltage": None,
-            "timestamp": None,
-            "packet_count": 0
+            "gps latitude": None,
+            "gps longitude": None
         }
+
+        # Initializes running status, thread, stope event, csv_file
         self.running = True
+        self.thread = None
         self.stop_event = Event()
-         # Open CSV file for writing
         self.csv_file = csv_file
-        
 
-    def init_csv(csv_file):
-        csv_file = open(csv_file, 'w', newline='')
-        csv_writer = csv.DictWriter(csv_file, fieldnames=csv_file.data.keys())
-        csv_writer.writeheader("TeamID", "Altitude", "Pressure", "Temperature", "Voltage", "Timestamp", "Packet Count")  # Write header to CSV
-        return
 
+    ######################### Main Loop and its Connected Functions #########################
+    
+    # Main loop, constantly reads data from COM port until a serial exception occurs or untile the stop funciton is called
     def read_data(self):
+        with open(self.csv_file, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow("TEAM_ID,MISSION_TIME,PACKET_COUNT,SW_STATE,PL_STATE,ALTITUDE,TEMP,VOLTAGE,GPS_LATITUDE,GPS_LONGITUDE")  # Writes a header for the CSV
         while self.running:
             try:
                 if self.serial_port.in_waiting > 0:
@@ -47,42 +65,41 @@ class DataReader:
                     self.parse_data(line)
                     self.data['packet_count'] += 1
                     # Writes data to csv
-                    self.csv_writer.writerow(f"TeamID,", self.data)
+                    writer.writerow(self.data)
                     
                 time.sleep(0.1)
             except serial.SerialException as e:
                 print(f"Serial error: {e}")
                 break
 
+    # Organized data recieved from the read data function
     def parse_data(self, line):
-        # Assume the line format is: "altitude,pressure,temperature,voltage"
+        # Assume the line format is: "TeamID,mission_time,packet_count,sw_state,pl_state,altitude,pressure,temperature,voltage,gps_latitude,gps_longitude"
         try:
-            altitude, pressure, temperature, voltage = map(float, line.split(','))
+            TeamID, mission_time, packet_count, sw_state, pl_state, altitude, pressure, temperature, voltage, gps_latitude, gps_longitude = map(float, line.split(','))
             self.data.update({
-                "altitude": altitude,
-                "pressure": pressure,
-                "temperature": temperature,
-                "voltage": voltage,
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+            "TeamID": 1004,
+            "mission time": mission_time,
+            "packet count": packet_count,
+            "sw state": sw_state,
+            "pl state": pl_state,
+            "altitude": altitude,
+            "pressure": pressure,
+            "temperature": temperature,
+            "voltage": voltage,
+            "gps latitude": gps_latitude,
+            "gps longitude": gps_longitude
             })
         except ValueError:
             print(f"Invalid data format: {line}")
 
+    # Starts main loop
     def start(self):
         self.thread = Thread(target=self.read_data)
         self.thread.start()
 
+    # Stops main loop
     def stop(self):
-        self.running = False
+        self.running = False 
         self.thread.join()
         self.serial_port.close()
-
-if __name__ == "__main__":
-    reader = DataReader(port='COM3', baudrate=9600)  # Change COM port and baudrate as needed
-    try:
-        reader.start()
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        reader.stop()
-        print("Data reading stopped.")

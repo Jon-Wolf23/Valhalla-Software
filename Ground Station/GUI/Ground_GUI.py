@@ -1,4 +1,4 @@
-# Required libraries
+# Required libraries and scripts
 import sys
 import csv
 from PySide6.QtWidgets import (
@@ -14,9 +14,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QToolButton, 
-    QWidgetAction,
-    QSizePolicy
 )
 from PySide6.QtCore import (
     Qt
@@ -28,10 +25,9 @@ from PySide6.QtGui import (
 import  Serial.Ground_serial as sr
 
 
-
-##################################################################################################################################################################
-# START GUI
-##################################################################################################################################################################
+##################################################################################################################################
+#   Sub Widgets and Dialog Windows
+##################################################################################################################################
 
 # Error Window pop-up, only displays an error message and a button to close it
 class ErrorWindow(QDialog):
@@ -82,8 +78,8 @@ class OpenCSV(QDialog):
 
 # Setup Window, called from show_setup_window, allows user to select COM port and baud rate
 class SetupWindow(QWidget):
-    def __init__(self, title, ports):
-        super().__init__()
+    def __init__(self, parent, title, ports):
+        super().__init__(parent)
 
         # Set layout and Title
         self.setWindowTitle(title)
@@ -99,12 +95,12 @@ class SetupWindow(QWidget):
         self.port_select.addItems(items_port)
         
         self.baud_select = QComboBox()
-        self.baud_select.addItems([0, 1200, 1800, 2400, 4800, 9600, 19200, 115200])
+        self.baud_select.addItems(['', '1200', '1800', '2400', '4800', '9600', '19200', '115200'])
 
         # Init Confirm Button
         confirm_button = QPushButton("Confirm", parent=self)
         confirm_button.setCheckable(True)
-        confirm_button.clicked.connect(self, self.confirm_port_and_baud)
+        confirm_button.clicked.connect(self.confirm_port_and_baud)
 
         # Add Widgits
         layout.addWidget(self.port_select)
@@ -133,8 +129,8 @@ class SetupWindow(QWidget):
 
 # Status Window, called from show_status_message, shows connected port and baud, I need to set it up to also display if a connection is successful
 class StatusWindow(QWidget):
-    def __init__(self, title):
-        super().__init__()
+    def __init__(self, parent, title):
+        super().__init__(parent)
         # Set layout and title
         self.setWindowTitle(title)
         self.setFixedSize(300, 100)
@@ -144,10 +140,12 @@ class StatusWindow(QWidget):
         # Gets values for currently set port and baud
         disp_port = MainWindow.opened_port if MainWindow.opened_port else "None Selected"
         disp_baud = MainWindow.baud_number if MainWindow.baud_number else "None Selected"
+        disp_csv = MainWindow.csv_filepath if MainWindow.csv_filepath else "None Selected"
             
         # Init Widgits
         port = QLabel("Opened Port: " + disp_port)
         baud = QLabel("Baud Rate: " + disp_baud)
+        csv = QLabel("CSV File Path: " + disp_csv)
         ok = QPushButton("ok", parent=self)
         ok.setCheckable(True)
         ok.clicked.connect(self.close)
@@ -155,6 +153,7 @@ class StatusWindow(QWidget):
         # Add Widgits
         layout.addWidget(port)
         layout.addWidget(baud)
+        layout.addWidget(csv)
         layout.addWidget(ok)
 
 # Place holder for live graph
@@ -167,7 +166,11 @@ class GraphPlaceholder(QWidget):
         layout.addWidget(label)
         self.setLayout(layout)
 
-# Main Window
+
+##################################################################################################################################
+#   Main Window
+##################################################################################################################################
+
 class MainWindow(QMainWindow):
     # Shared Variables
     opened_port = "" 
@@ -187,6 +190,12 @@ class MainWindow(QMainWindow):
 
     # Current csv file
     csv_filepath = ""
+
+    # State of Data Reader
+    main_loop_running = False
+
+    # Data Reader
+    ground_station = None
 
     def __init__(self):
         super().__init__()
@@ -219,6 +228,9 @@ class MainWindow(QMainWindow):
 
         # Create menu bar
         self.create_menu_bar()
+
+
+######################### Menu Bar #########################
 
     # Create menu bar, called from main, displays overhead menu and dropdowns
     def create_menu_bar(self):
@@ -255,41 +267,65 @@ class MainWindow(QMainWindow):
         status_action.triggered.connect(self.show_status_message)
         status_menu.addAction(status_action)
 
-        # Add a spacer to push the run button to the right
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        menu_bar.setCornerWidget(spacer, Qt.TopRightCorner)
+        self.run_action = QAction(QIcon("GUI\\run_button.png"), "Run", self)
+        self.run_action.triggered.connect(self.toggle_run_stop)
+        menu_bar.addAction(self.run_action)
 
-        # Create a Play button with an icon
-        play_button = QToolButton(self)
-        play_button.setIcon(QIcon("GUI\\run_button.png"))  # Use your play icon here
-        play_button.setToolTip("Play")
-        play_button.clicked.connect(self.main_program_loop)
 
-        # Add the play button to the menu bar using QWidgetAction
-        play_action = QWidgetAction(self)
-        play_action.setDefaultWidget(play_button)
+######################### Main Program Driver #########################
 
-        menu_bar.addAction(play_action)
+    def toggle_run_stop(self):
+        # Toggle between run and Stop
+        if not MainWindow.main_loop_running:
+            self.start_running()
+        else:
+            self.stop_running()
+
+    def start_running(self):
+        # Set to Stop state
+        MainWindow.main_loop_running = True
+        self.run_action.setIcon(QIcon("GUI\\stop_button.png"))
+        self.run_action.setText("Stop")
+        
+        if MainWindow.opened_port != '' and MainWindow.baud_number != '' and MainWindow.csv_filepath != '':
+            try:
+                MainWindow.ground_station = sr.DataReader(port=MainWindow.opened_port, baudrate=int(MainWindow.baud_number), csv_file=MainWindow.csv_filepath)
+            except Exception as e:
+                self.error_window = ErrorWindow(self, f"Failed to start data reading: {e}")
+                self.error_window.exec()
+        else:
+            self.error_window = ErrorWindow(self, "Need valid COM port, baud rate, and csv filepath")
+            self.error_window.exec()
+            self.stop_running()
+
+    def stop_running(self):
+        # Set to Play state
+        MainWindow.main_loop_running = False
+        self.run_action.setIcon(QIcon("GUI\\run_button.png"))
+        self.run_action.setText("Run")
+
+        if MainWindow.ground_station:
+            MainWindow.ground_station.stop()
+            MainWindow.ground_station = None
+
+    
+######################### Menu Bar Functions #########################
 
     # Called from create_menu_bar, creates a SetupWindow instance
     def show_setup_window(self):
-        self.setup_window = SetupWindow("Setup", sr.return_com_ports())
+        self.setup_window = SetupWindow(self, "Setup", sr.return_com_ports())
         self.setup_window.show()
 
     # Called from create_menu_bar, creates StatusWindow instance
     def show_status_message(self):
-        self.status_window = StatusWindow("Status")
+        self.status_window = StatusWindow(self, "Status")
         self.status_window.show()
 
     def create_csv(self):
          # Open file dialog to create a new CSV file
          file_path, _ = QFileDialog.getSaveFileName(self, "Create CSV File", "", "CSV Files (*.csv)")
          if file_path:
-            self.selected_file = file_path
-            # Optionally, you could create the file here
-            with open(file_path, 'w') as file:
-                file.write("TEAM_ID,MISSION_TIME,PACKET_COUNT,SW_STATE,PL_STATE,ALTITUDE,TEMP,VOLTAGE,GPS_LATITUDE,GPS_LONGITUDE\n")  # Writing a header for the CSV
+            MainWindow.csv_filepath = file_path
 
     # Function to open csv file, called by the open file action in menu bar
     def open_csv(self):
@@ -328,14 +364,11 @@ class MainWindow(QMainWindow):
         MainWindow.gps_latitude = []
         MainWindow.gps_longitude = []
 
-    def main_program_loop():
-        return
 
     
 ##################################################################################################################################################################
-# END GUI
+# RUNS GROUNDSTATION
 ##################################################################################################################################################################
-
 
 if __name__ == "__main__":
     app = QApplication([])
