@@ -70,7 +70,7 @@ class DataReader:
                 time.sleep(0.1)
             except serial.SerialException as e:
                 print(f"Serial error: {e}")
-                break
+                time.sleep(1)
 
     # Organized data recieved from the read data function
     def parse_data(self, line):

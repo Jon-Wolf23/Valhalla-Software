@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
     QVBoxLayout,
-    QHBoxLayout,
     QWidget,
     QLabel,
     QPushButton,
@@ -14,6 +13,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QSplitter
 )
 from PySide6.QtCore import (
     Qt
@@ -23,25 +23,42 @@ from PySide6.QtGui import (
     QIcon
 )
 import  Serial.Ground_serial as sr
+import LiveGraphing.Ground_live as gl
 
 
 ##################################################################################################################################
 #   Sub Widgets and Dialog Windows
 ##################################################################################################################################
 
+def center_on_parent(self):
+        """Center the window on the parent window"""
+        if self.parent is not None:
+            parent_geometry = self.parent.geometry()
+            parent_center_x = parent_geometry.x() + (parent_geometry.width() // 2)
+            parent_center_y = parent_geometry.y() + (parent_geometry.height() // 2)
+
+            window_x = parent_center_x - (self.width() // 2)
+            window_y = parent_center_y - (self.height() // 2)
+
+            self.move(window_x, window_y)
+
+
+
 # Error Window pop-up, only displays an error message and a button to close it
 class ErrorWindow(QDialog):
     def __init__(self, parent, err_msg):
-        super().__init__(parent)
+        super().__init__()
 
         #Set layout and Title
         self.setWindowTitle("Error")
         layout = QVBoxLayout()
         self.setLayout(layout)
+        self.parent = parent
+        center_on_parent(self)
 
         # Init Widgits
         msg = QLabel(err_msg)
-        ok = QPushButton("Ok", parent=self)
+        ok = QPushButton("Ok")
         ok.setCheckable(True)
         ok.clicked.connect(self.close)
 
@@ -51,12 +68,14 @@ class ErrorWindow(QDialog):
 
 class OpenCSV(QDialog):
     def __init__(self, parent):
-        super().__init__(parent)
+        super().__init__()
 
         # Set Layout and title
         self.setWindowTitle("Open CSV File")
         layout = QVBoxLayout()
         self.setLayout(layout)
+        self.parent = parent
+        center_on_parent(self)
 
         # Ok and Quit buttons
         ok_quit_buttons = (
@@ -79,13 +98,15 @@ class OpenCSV(QDialog):
 # Setup Window, called from show_setup_window, allows user to select COM port and baud rate
 class SetupWindow(QWidget):
     def __init__(self, parent, title, ports):
-        super().__init__(parent)
+        super().__init__()
 
         # Set layout and Title
         self.setWindowTitle(title)
         self.setFixedSize(300, 100)
         layout = QVBoxLayout()
         self.setLayout(layout)
+        self.parent = parent
+        center_on_parent(self)
 
         # Init port and baud selections
         self.port_select = QComboBox()
@@ -98,7 +119,7 @@ class SetupWindow(QWidget):
         self.baud_select.addItems(['', '1200', '1800', '2400', '4800', '9600', '19200', '115200'])
 
         # Init Confirm Button
-        confirm_button = QPushButton("Confirm", parent=self)
+        confirm_button = QPushButton("Confirm")
         confirm_button.setCheckable(True)
         confirm_button.clicked.connect(self.confirm_port_and_baud)
 
@@ -130,12 +151,14 @@ class SetupWindow(QWidget):
 # Status Window, called from show_status_message, shows connected port and baud, I need to set it up to also display if a connection is successful
 class StatusWindow(QWidget):
     def __init__(self, parent, title):
-        super().__init__(parent)
+        super().__init__()
         # Set layout and title
         self.setWindowTitle(title)
-        self.setFixedSize(300, 100)
+        self.setFixedSize(300, 110)
         layout = QVBoxLayout()
         self.setLayout(layout)
+        self.parent = parent
+        center_on_parent(self)
 
         # Gets values for currently set port and baud
         disp_port = MainWindow.opened_port if MainWindow.opened_port else "None Selected"
@@ -146,7 +169,7 @@ class StatusWindow(QWidget):
         port = QLabel("Opened Port: " + disp_port)
         baud = QLabel("Baud Rate: " + disp_baud)
         csv = QLabel("CSV File Path: " + disp_csv)
-        ok = QPushButton("ok", parent=self)
+        ok = QPushButton("Ok")
         ok.setCheckable(True)
         ok.clicked.connect(self.close)
 
@@ -156,15 +179,6 @@ class StatusWindow(QWidget):
         layout.addWidget(csv)
         layout.addWidget(ok)
 
-# Place holder for live graph
-class GraphPlaceholder(QWidget):
-    def __init__(self, title):
-        super().__init__()
-        layout = QVBoxLayout()
-        label = QLabel(title)
-        label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(label)
-        self.setLayout(layout)
 
 
 ##################################################################################################################################
@@ -197,6 +211,7 @@ class MainWindow(QMainWindow):
     # Data Reader
     ground_station = None
 
+
     def __init__(self):
         super().__init__()
         # Set title and layout
@@ -206,25 +221,34 @@ class MainWindow(QMainWindow):
         # Create a central widget and set the layout
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
+
+        # Main layout uses QVBoxLayout, but we add QSplitters for better resizing
         main_layout = QVBoxLayout(central_widget)
 
-        # Top row for the first two graphs
-        top_layout = QHBoxLayout()
-        graph1 = GraphPlaceholder("Graph 1")
-        graph2 = GraphPlaceholder("Graph 2")
-        top_layout.addWidget(graph1)
-        top_layout.addWidget(graph2)
+        # Top and bottom layouts using QSplitter to make them resizable
+        top_splitter = QSplitter(self)
+        top_splitter.setOrientation(Qt.Horizontal)
+        self.graph1 = gl.LiveGraph("Graph 1", "Time(s)", "Altitude(m)", MainWindow.altitude, MainWindow.mission_time)
+        self.graph2 = gl.LiveGraph("Graph 2", "Time(s)", "Temperature(C)", MainWindow.temp, MainWindow.mission_time)
+        top_splitter.addWidget(self.graph1)
+        top_splitter.addWidget(self.graph2)
 
-        # Bottom row for the last two graphs
-        bottom_layout = QHBoxLayout()
-        graph3 = GraphPlaceholder("Graph 3")
-        graph4 = GraphPlaceholder("Graph 4")
-        bottom_layout.addWidget(graph3)
-        bottom_layout.addWidget(graph4)
+        bottom_splitter = QSplitter(self)
+        bottom_splitter.setOrientation(Qt.Horizontal)
+        self.graph3 = gl.LiveGraph("Graph 3", "Time(s)", "Voltage(V)", MainWindow.voltage, MainWindow.mission_time)
+        self.info4 = gl.LiveUpdateInfo(MainWindow.mission_time, MainWindow.packet_count, MainWindow.sw_state, MainWindow.pl_state, MainWindow.gps_latitude, MainWindow.gps_longitude)
+        bottom_splitter.addWidget(self.graph3)
+        bottom_splitter.addWidget(self.info4)
 
-        # Add top and bottom layouts to the main layout
-        main_layout.addLayout(top_layout)
-        main_layout.addLayout(bottom_layout)
+        # Add the splitters to the main layout
+        main_layout.addWidget(top_splitter)
+        main_layout.addWidget(bottom_splitter)
+
+        # Set stretch factors to make sure each widget resizes proportionally
+        top_splitter.setStretchFactor(0, 1)  # First widget takes 50%
+        top_splitter.setStretchFactor(1, 1)  # Second widget takes 50%
+        bottom_splitter.setStretchFactor(0, 1)  # First widget takes 50%
+        bottom_splitter.setStretchFactor(1, 1)  # Second widget takes 50%
 
         # Create menu bar
         self.create_menu_bar()
@@ -277,11 +301,13 @@ class MainWindow(QMainWindow):
     def toggle_run_stop(self):
         # Toggle between run and Stop
         if not MainWindow.main_loop_running:
-            self.start_running()
+            self.start_running_serial()
+            self.start_running_graphs_and_info()
         else:
-            self.stop_running()
+            self.stop_running_serial()
+            self.stop_running_graphs_and_info()
 
-    def start_running(self):
+    def start_running_serial(self):
         # Set to Stop state
         MainWindow.main_loop_running = True
         self.run_action.setIcon(QIcon("GUI\\stop_button.png"))
@@ -290,15 +316,17 @@ class MainWindow(QMainWindow):
         if MainWindow.opened_port != '' and MainWindow.baud_number != '' and MainWindow.csv_filepath != '':
             try:
                 MainWindow.ground_station = sr.DataReader(port=MainWindow.opened_port, baudrate=int(MainWindow.baud_number), csv_file=MainWindow.csv_filepath)
+                if MainWindow.ground_station:
+                    MainWindow.ground_station.start()
             except Exception as e:
                 self.error_window = ErrorWindow(self, f"Failed to start data reading: {e}")
                 self.error_window.exec()
         else:
             self.error_window = ErrorWindow(self, "Need valid COM port, baud rate, and csv filepath")
             self.error_window.exec()
-            self.stop_running()
+            self.stop_running_serial()
 
-    def stop_running(self):
+    def stop_running_serial(self):
         # Set to Play state
         MainWindow.main_loop_running = False
         self.run_action.setIcon(QIcon("GUI\\run_button.png"))
@@ -307,6 +335,20 @@ class MainWindow(QMainWindow):
         if MainWindow.ground_station:
             MainWindow.ground_station.stop()
             MainWindow.ground_station = None
+
+    def start_running_graphs_and_info(self):
+        self.graph1.start()
+        self.graph2.start()
+        self.graph3.start()
+        self.info4.start()
+
+    def stop_running_graphs_and_info(self):
+        self.graph1.stop()
+        self.graph2.stop()
+        self.graph3.stop()
+        self.info4.stop()
+
+
 
     
 ######################### Menu Bar Functions #########################
