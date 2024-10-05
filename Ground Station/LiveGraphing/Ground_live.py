@@ -1,6 +1,6 @@
 # Required libraries
 from PySide6.QtWidgets import QVBoxLayout, QWidget, QLabel, QSizePolicy
-from PySide6.QtCore import QTimer, QObject, QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import time
@@ -10,16 +10,19 @@ import numpy
 class GraphDriver(QObject):
     data_updated = Signal()  # Signal to notify when new data is available
 
-    def __init__(self, live_graph):
+    def __init__(self, live_graph, telementary, x, y):
         super().__init__()
         self.live_graph = live_graph
+        self.telementary = telementary
+        self.x = x
+        self.y = y
         self.running = True
 
     def update_data(self):
         while self.running:
             # Simulate data generation in the background
-            self.live_graph.x_data
-            self.live_graph.y_data
+            self.live_graph.x_data = self.telementary[self.x]
+            self.live_graph.y_data = self.telementary[self.y]
             
             # Emit signal to update plot in the main thread
             self.data_updated.emit()
@@ -31,7 +34,7 @@ class GraphDriver(QObject):
 
 
 class LiveGraph(QWidget):
-    def __init__(self, title, x_label, y_label, x_data, y_data):
+    def __init__(self, title, telementary, x_label, y_label, x_data, y_data):
         super().__init__()
         layout = QVBoxLayout()
         self.setLayout(layout)
@@ -50,23 +53,12 @@ class LiveGraph(QWidget):
         self.ax.set_xlabel(self.x_label)
         self.ax.set_ylabel(self.y_label)
 
-        # Set background color for the figure and axes
-        self.fig.patch.set_facecolor('#ffffff')  # Figure background color
-        self.ax.set_facecolor('#1e1e1e')          # Axes background color
-
-        # Set title, xlabel, ylabel with specified colors
-        self.ax.set_title(self.title, color='#ffffff')
-        self.ax.set_xlabel(self.x_label, color='#ffffff')
-        self.ax.set_ylabel(self.y_label, color='#ffffff')
-
-        
-        # Set axis (spine) colors
-        for spine in self.ax.spines.values():
-            spine.set_color('#1e1e1e')  # Set the bevel color for all spines
-
         # Initialize data lists
-        self.x_data = x_data
-        self.y_data = y_data
+        self.x_data = []
+        self.y_data = []
+
+        # Initialize telementary
+        self.telementary = telementary
 
        # Set the size policy to allow expanding and shrinking with the window
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -76,7 +68,7 @@ class LiveGraph(QWidget):
         self.update_plot()
 
         # Create worker and move it to a QThread
-        self.worker = GraphDriver(self)
+        self.worker = GraphDriver(self, telementary, x_data, y_data)
         self.thread = QThread()
         self.worker.moveToThread(self.thread)
 
@@ -102,7 +94,6 @@ class LiveGraph(QWidget):
         self.ax.set_ylabel(self.y_label)
         self.ax.plot(self.x_data, self.y_data, color='blue')
         self.ax.set_xlim(left=0)
-        self.ax.tick_params(axis='both', colors=self.ax.title.get_color())  # Preserve text color
 
         # Redraw the canvas
         self.canvas.draw()
@@ -111,20 +102,20 @@ class LiveGraph(QWidget):
 class InfoDriver(QObject):
     data_updated = Signal()  # Signal to notify when new data is available
 
-    def __init__(self, live_info):
+    def __init__(self, live_info, telementary):
         super().__init__()
         self.live_info = live_info
+        self.telementary = telementary
         self.running = True
 
     def update_data(self):
         while self.running:
-            # Simulate data generation in the background
-            self.live_info.mission_time
-            self.live_info.packet_count
-            self.live_info.sw_state
-            self.live_info.pl_state
-            self.live_info.latitude
-            self.live_info.longitude
+            self.live_info.mission_time = self.telementary["mission_time"]
+            self.live_info.packet_count = self.telementary["packet_count"]
+            self.live_info.sw_state = self.telementary["sw_state"]
+            self.live_info.pl_state = self.telementary["pl_state"]
+            self.live_info.latitude = self.telementary["gps_latitude"]
+            self.live_info.longitude = self.telementary["gps_longitude"]
 
             # Emit signal to update the info in the main thread
             self.data_updated.emit()
@@ -135,13 +126,13 @@ class InfoDriver(QObject):
         self.running = False
 
 class LiveUpdateInfo(QWidget):
-    def __init__(self, mission_time, packet_count, sw_state, pl_state, latitude, longitude):
+    def __init__(self, telementary):
         super().__init__()
         layout = QVBoxLayout()
         self.setLayout(layout)
 
         # Init Values
-        if not mission_time and not packet_count and not sw_state and not pl_state and not latitude and not longitude:
+        if not telementary["mission_time"] and not telementary["packet_count"] and not telementary["sw_state"] and not telementary["pl_state"] and not telementary["gps_latitude"] and not telementary["gps_longitude"]:
             self.mission_time = [0]
             self.packet_count = [0]
             self.sw_state = [0]
@@ -149,12 +140,12 @@ class LiveUpdateInfo(QWidget):
             self.latitude = [0]
             self.longitude = [0]
         else:
-            self.mission_time = mission_time
-            self.packet_count = packet_count
-            self.sw_state = sw_state
-            self.pl_state = pl_state
-            self.latitude = latitude
-            self.longitude = longitude
+            self.mission_time = telementary["mission_time"]
+            self.packet_count = telementary["packet_count"]
+            self.sw_state = telementary["sw_state"]
+            self.pl_state = telementary["pl_state"]
+            self.latitude = telementary["gps_latitude"]
+            self.longitude = telementary["gps_longitude"]
 
         # Display initial values
         self.current_mission_time = QLabel(f"Current Mission Time: {self.mission_time[-1]}")
@@ -174,24 +165,11 @@ class LiveUpdateInfo(QWidget):
         # Set size policy to be resizable
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-    def update_info(self):
-        """Update the labels with the latest data."""
-        self.current_mission_time.setText(f"Current Mission Time: {self.mission_time[-1]}")
-        self.current_packet_count.setText(f"Current Packet Count: {self.packet_count[-1]}")
-        self.current_sw_state.setText(f"Current Software State: {self.sw_state[-1]}")
-        self.current_pl_state.setText(f"Current Payload State: {self.pl_state[-1]}")
-        self.current_latitude.setText(f"Current Latitude: {self.latitude[-1]}")
-        self.current_longitude.setText(f"Current Longitude: {self.longitude[-1]}")
-
-    def start(self):
-        """Start the data update process in a background thread."""
-        self.worker = InfoDriver(self)  # Create the data worker
+        self.worker = InfoDriver(self, telementary)  # Create the data worker
         self.thread = QThread()         # Create a QThread
         self.worker.moveToThread(self.thread)
 
-        # Connect the worker's data_updated signal to the update_info method
-        self.worker.data_updated.connect(self.update_info)
-
+    def start(self):
         # Start the worker's update_data function when the thread starts
         self.thread.started.connect(self.worker.update_data)
         self.thread.start()

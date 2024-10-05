@@ -1,6 +1,7 @@
 # Required libraries and scripts
 import sys
 import csv
+import os
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -11,8 +12,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QLabel,
     QDialog,
-    QDialogButtonBox,
-    QFileDialog,
+    QLineEdit,
     QSplitter
 )
 from PySide6.QtCore import (
@@ -24,6 +24,12 @@ from PySide6.QtGui import (
 )
 import  Serial.Ground_serial as sr
 import LiveGraphing.Ground_live as gl
+import Data.Data_Handler as data
+
+## OBJECT DECLARATIONS
+csv_handler = data.CSV_Handler()
+data_handler = data.Data_Handler()
+
 
 
 ##################################################################################################################################
@@ -31,17 +37,21 @@ import LiveGraphing.Ground_live as gl
 ##################################################################################################################################
 
 def center_on_parent(self):
-        """Center the window on the parent window"""
-        if self.parent is not None:
-            parent_geometry = self.parent.geometry()
-            parent_center_x = parent_geometry.x() + (parent_geometry.width() // 2)
-            parent_center_y = parent_geometry.y() + (parent_geometry.height() // 2)
+    """Center the window on the parent window"""
+    if self.parent is not None:
+        # Get geometry of parent window (returns QRect)
+        parent_geometry = self.parent.geometry()
 
-            window_x = parent_center_x - (self.width() // 2)
-            window_y = parent_center_y - (self.height() // 2)
+        # Calculate the center point of the parent window
+        parent_center_x = parent_geometry.x() + (parent_geometry.width() // 2)
+        parent_center_y = parent_geometry.y() + (parent_geometry.height() // 2)
 
-            self.move(window_x, window_y)
+        # Calculate the top-left corner of the child window (self)
+        window_x = parent_center_x - (self.width() // 2)
+        window_y = parent_center_y - (self.height() // 2)
 
+        # Move the child window to the calculated position
+        self.move(window_x, window_y)
 
 
 # Error Window pop-up, only displays an error message and a button to close it
@@ -66,38 +76,68 @@ class ErrorWindow(QDialog):
         layout.addWidget(msg)
         layout.addWidget(ok)
 
-class OpenCSV(QDialog):
-    def __init__(self, parent):
+
+class OpenCSV(QWidget):
+    def __init__(self, parent, directory):
         super().__init__()
 
         # Set Layout and title
         self.setWindowTitle("Open CSV File")
         layout = QVBoxLayout()
         self.setLayout(layout)
+        self.setFixedSize(300, 100)
         self.parent = parent
         center_on_parent(self)
 
-        # Ok and Quit buttons
-        ok_quit_buttons = (
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
-        ) 
-        self.buttonBox = QDialogButtonBox(ok_quit_buttons)
-        self.buttonBox.accepted.connect(self.accept)
-        self.buttonBox.rejected.connect(self.reject)
+        files = [""]
+        files.extend(csv_handler.files_in_directory(directory))
+        self.file_select = QComboBox()
+        self.file_select.addItems(files)
+        
+        confirm_button = QPushButton("Confirm")
+        confirm_button.setCheckable(True)
+        confirm_button.clicked.connect(self.open_csv)
 
-        # Open file dialog to select an existing CSV file
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open CSV File", "", "CSV Files (*.csv)")
-        if file_path:
-            self.selected_file = file_path
-            self.label.setText(f"Selected File: {file_path}")
 
-        # Init Widgits
-        layout.addWidget(self.buttonBox)
+        layout.addWidget(self.file_select)
+        layout.addWidget(confirm_button)
+
+    def open_csv(self):
+        csv_handler.set_csv(self.file_select.currentText())
+        self.close()
+
+        
+
+class CreateCSV(QWidget):
+    def __init__(self, parent):
+        super().__init__()
+
+        # Set Layout and title
+        self.setWindowTitle("Create CSV File")
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        self.setFixedSize(300, 100)
+        self.parent = parent
+        center_on_parent(self)
+
+        self.new_file = QLineEdit("Test")
+        
+        confirm_button = QPushButton("Confirm")
+        confirm_button.setCheckable(True)
+        confirm_button.clicked.connect(self.create_csv)
+
+
+        layout.addWidget(self.new_file)
+        layout.addWidget(confirm_button)
+
+    def create_csv(self):
+        csv_handler.create_csv(self.new_file.text())
+        self.close()
 
 
 # Setup Window, called from show_setup_window, allows user to select COM port and baud rate
 class SetupWindow(QWidget):
-    def __init__(self, parent, title, ports):
+    def __init__(self, parent, title):
         super().__init__()
 
         # Set layout and Title
@@ -110,10 +150,7 @@ class SetupWindow(QWidget):
 
         # Init port and baud selections
         self.port_select = QComboBox()
-        items_port = [""]
-        for items in ports:     # Adds blank entry to the beginnin of the ports
-            items_port.append(items)
-        self.port_select.addItems(items_port)
+        self.port_select.addItems(data_handler.reload_ports(sr.return_com_ports()))
         
         self.baud_select = QComboBox()
         self.baud_select.addItems(['', '1200', '1800', '2400', '4800', '9600', '19200', '115200'])
@@ -144,8 +181,8 @@ class SetupWindow(QWidget):
             self.error_window = ErrorWindow(self, "Please select a COM port and baud rate")
             self.error_window.exec()
         else:
-            MainWindow.opened_port = self.port_select.currentText()
-            MainWindow.baud_number = self.baud_select.currentText()
+            data_handler.opened_port= self.port_select.currentText()
+            data_handler.baud_rate = self.baud_select.currentText()
             self.close()
 
 # Status Window, called from show_status_message, shows connected port and baud, I need to set it up to also display if a connection is successful
@@ -161,9 +198,9 @@ class StatusWindow(QWidget):
         center_on_parent(self)
 
         # Gets values for currently set port and baud
-        disp_port = MainWindow.opened_port if MainWindow.opened_port else "None Selected"
-        disp_baud = MainWindow.baud_number if MainWindow.baud_number else "None Selected"
-        disp_csv = MainWindow.csv_filepath if MainWindow.csv_filepath else "None Selected"
+        disp_port = data_handler.opened_port if data_handler.opened_port else "None Selected"
+        disp_baud = data_handler.baud_rate if data_handler.baud_rate else "None Selected"
+        disp_csv = csv_handler.file if csv_handler.file else "None Selected"
             
         # Init Widgits
         port = QLabel("Opened Port: " + disp_port)
@@ -186,32 +223,6 @@ class StatusWindow(QWidget):
 ##################################################################################################################################
 
 class MainWindow(QMainWindow):
-    # Shared Variables
-    opened_port = "" 
-    baud_number = 0
-
-    # Graphed Data
-    team_id = 1004
-    mission_time = []
-    packet_count = []
-    sw_state = []
-    pl_state = []
-    altitude = []
-    temp = []
-    voltage = []
-    gps_latitude = []
-    gps_longitude = []
-
-    # Current csv file
-    csv_filepath = ""
-
-    # State of Data Reader
-    main_loop_running = False
-
-    # Data Reader
-    ground_station = None
-
-
     def __init__(self):
         super().__init__()
         # Set title and layout
@@ -228,15 +239,16 @@ class MainWindow(QMainWindow):
         # Top and bottom layouts using QSplitter to make them resizable
         top_splitter = QSplitter(self)
         top_splitter.setOrientation(Qt.Horizontal)
-        self.graph1 = gl.LiveGraph("Graph 1", "Time(s)", "Altitude(m)", MainWindow.altitude, MainWindow.mission_time)
-        self.graph2 = gl.LiveGraph("Graph 2", "Time(s)", "Temperature(C)", MainWindow.temp, MainWindow.mission_time)
+        self.graph1 = gl.LiveGraph("Graph 1", data_handler.telementary, "Time(s)", "Altitude(m)", "altitude", "mission_time")
+        self.graph2 = gl.LiveGraph("Graph 2", data_handler.telementary, "Time(s)", "Temperature(C)", "temp", "mission_time")
         top_splitter.addWidget(self.graph1)
         top_splitter.addWidget(self.graph2)
 
         bottom_splitter = QSplitter(self)
         bottom_splitter.setOrientation(Qt.Horizontal)
-        self.graph3 = gl.LiveGraph("Graph 3", "Time(s)", "Voltage(V)", MainWindow.voltage, MainWindow.mission_time)
-        self.info4 = gl.LiveUpdateInfo(MainWindow.mission_time, MainWindow.packet_count, MainWindow.sw_state, MainWindow.pl_state, MainWindow.gps_latitude, MainWindow.gps_longitude)
+        self.graph3 = gl.LiveGraph("Graph 3", data_handler.telementary, "Time(s)", "Voltage(V)", "voltage", "mission_time")
+        self.info4 = gl.LiveUpdateInfo(
+            data_handler.telementary)
         bottom_splitter.addWidget(self.graph3)
         bottom_splitter.addWidget(self.info4)
 
@@ -300,7 +312,7 @@ class MainWindow(QMainWindow):
 
     def toggle_run_stop(self):
         # Toggle between run and Stop
-        if not MainWindow.main_loop_running:
+        if not data_handler.running:
             self.start_running_serial()
             self.start_running_graphs_and_info()
         else:
@@ -309,15 +321,15 @@ class MainWindow(QMainWindow):
 
     def start_running_serial(self):
         # Set to Stop state
-        MainWindow.main_loop_running = True
+        data_handler.running = True
         self.run_action.setIcon(QIcon("GUI\\stop_button.png"))
         self.run_action.setText("Stop")
         
-        if MainWindow.opened_port != '' and MainWindow.baud_number != '' and MainWindow.csv_filepath != '':
+        if data_handler.opened_port != '' and data_handler.baud_rate != '' and csv_handler.file != '':
             try:
-                MainWindow.ground_station = sr.DataReader(port=MainWindow.opened_port, baudrate=int(MainWindow.baud_number), csv_file=MainWindow.csv_filepath)
-                if MainWindow.ground_station:
-                    MainWindow.ground_station.start()
+                data_handler.init_serial_object(data_handler.opened_port, data_handler.baud_rate, csv_handler.file)
+                if data_handler.ground_station:
+                    data_handler.ground_station.start()
             except Exception as e:
                 self.error_window = ErrorWindow(self, f"Failed to start data reading: {e}")
                 self.error_window.exec()
@@ -328,13 +340,13 @@ class MainWindow(QMainWindow):
 
     def stop_running_serial(self):
         # Set to Play state
-        MainWindow.main_loop_running = False
+        data_handler.running = False
         self.run_action.setIcon(QIcon("GUI\\run_button.png"))
         self.run_action.setText("Run")
 
-        if MainWindow.ground_station:
-            MainWindow.ground_station.stop()
-            MainWindow.ground_station = None
+        if data_handler.ground_station:
+            data_handler.ground_station.stop()
+            data_handler.ground_station = None
 
     def start_running_graphs_and_info(self):
         self.graph1.start()
@@ -355,7 +367,7 @@ class MainWindow(QMainWindow):
 
     # Called from create_menu_bar, creates a SetupWindow instance
     def show_setup_window(self):
-        self.setup_window = SetupWindow(self, "Setup", sr.return_com_ports())
+        self.setup_window = SetupWindow(self, "Setup")
         self.setup_window.show()
 
     # Called from create_menu_bar, creates StatusWindow instance
@@ -364,33 +376,13 @@ class MainWindow(QMainWindow):
         self.status_window.show()
 
     def create_csv(self):
-         # Open file dialog to create a new CSV file
-         file_path, _ = QFileDialog.getSaveFileName(self, "Create CSV File", "", "CSV Files (*.csv)")
-         if file_path:
-            MainWindow.csv_filepath = file_path
+        self.create_window = CreateCSV(self)
+        self.create_window.show()
 
     # Function to open csv file, called by the open file action in menu bar
     def open_csv(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open CSV File", "", "CSV Files (*.csv)")
-        if file_path:
-            self.csv_filepath = file_path
-
-         # Read the CSV content
-        with open(file_path, newline='', encoding='utf-8') as csvfile:
-            csv_reader = csv.reader(csvfile)
-            
-            # Iterate over the rows in the CSV file
-            for row in csv_reader:
-                if len(row) >= 10:  # Ensure the row has at least 5 columns
-                    MainWindow.mission_time.append(row[1])     # Column 1
-                    MainWindow.packet_count.append(row[2])     # Column 2
-                    MainWindow.sw_state.append(row[3])  # Column 3
-                    MainWindow.pl_state.append(row[4])      # Column 4
-                    MainWindow.altitude.append(row[5])         # Column 5
-                    MainWindow.temp.append(row[6])         # Column 6
-                    MainWindow.voltage.append(row[7])         # Column 7
-                    MainWindow.gps_latitude.append(row[8])         # Column 8
-                    MainWindow.gps_longitude.append(row[9])     # Column 9
+        self.open_window = OpenCSV(self, "CSV Files")
+        self.open_window.show()
 
     
     # Function to close csv file, called by the close file action in menu bar
