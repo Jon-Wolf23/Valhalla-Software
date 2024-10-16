@@ -1,0 +1,371 @@
+// LIBRARIES
+#include <Arduino.h>
+#include <SPI.h>
+#include <SD.h>
+#include <SerialUART.h>
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BMP3XX.h>
+#include <SparkFun_u-blox_GNSS_Arduino_Library.h>
+
+/*######################### PIN DECLARATIONS ########################*/
+
+// CS pin on pico
+#define SD_CS_PIN 17
+
+// Serial1 UART
+#define Serial1_TX_PIN 0
+#define Serial1_RX_PIN 1
+
+// BMP390
+Adafruit_BMP3XX bmp390;
+#define BMP390_ADDRESS 0x77
+
+// ZOE-M8Q
+SFE_UBLOX_GNSS zoem8q;
+
+// Buzzer and Led pin
+#define BUZ_LED_PIN 28
+
+// Voltage
+#define VOLTAGE_PIN 26
+
+/*###################################################################*/
+
+
+/*############## GLOBAL VARIABLES AND CONSTANTS #####################*/
+
+// Message Type Indicator
+const String STATUS_IND = "1";
+const String ERROR_IND = "2";
+const String DATA_IND = "0";
+
+// Data Variables
+const int team_id = 1004;
+float mission_time;
+int packet_count = 0;
+String sw_state;
+String pl_state;
+float altitude = 0.0;
+float pressure  = 0.0;
+float temp = 0.0;
+float voltage = 0.0;
+float gps_latitude = 0.0;
+float gps_longitude = 0.0;
+
+// true if SD card fails to connect
+bool SDERROR = false;
+
+// true if BMP390 fails to connect
+bool BMPERROR = false;
+
+// true if ZOE-M8Q fails to connect
+bool ZOEERROR = false;
+
+// Launch state variables
+bool transmit = true;
+bool release = false;
+bool deploy = false;
+bool landed = false;
+
+bool deployed = false;
+bool released = false;
+bool sd_closed = false;
+String data;
+
+// SD
+String file;
+File data_file = SD.open(file, FILE_WRITE);
+
+/*###################################################################*/
+
+
+/*################## FUNCTION DECLARATIONS ##########################*/
+
+String file_increment(const String base, const String ext);
+void init_sd();
+void init_bmp390();
+void init_zoem8q();
+float roundToPrecision(float value, int decimalPlaces);
+void set_state(String state);
+
+/*###################################################################*/
+
+
+/*########################## SETUP ##################################*/
+
+void setup() {
+  // Opens Serial1 connection through USB for debugging
+  Serial.begin(9600);
+
+  // Opens Serial1 connection with Serial1
+  Serial1.begin(9600);
+
+  // Initializes I2C
+  Wire.begin();
+
+  // Initialize SD card
+  Serial1.println(STATUS_IND + "Connecting to SD Card...");
+  Serial.println("Connecting to SD Card...");
+  init_sd();
+
+  if(!SDERROR)
+  {
+    // Create a new csv name
+    String base_file_name = "test";
+    String ext = ".csv";
+    file = file_increment(base_file_name, ext);
+
+    // Init csv
+    if (data_file)
+    {
+      Serial1.println(STATUS_IND + "File creation successful");
+      // println csv header to file
+      data_file.println("TEAM_ID, MISSION_TIME, PACKET_COUNT, SW_STATE, PL_STATE, ALTITUDE, PRESSURE, TEMPERATURE, VOLTAGE, GPS_LATITUDE, GPS_LONGITUDE");
+    }else
+    {
+      Serial1.println(STATUS_IND + "CSV file failed to open");
+      data_file.close();
+    }
+  }
+
+  // Init BMP390
+  Serial1.println(STATUS_IND + "Connecting to BMP390...");
+  init_bmp390();
+
+  // Init ZOE-M8Q
+  Serial1.println(STATUS_IND + "Connecting to ZOE-M8Q...");
+  init_zoem8q();
+
+  // Init buzzer and LED
+  pinMode(BUZ_LED_PIN, OUTPUT);
+  data_file.println(BUZ_LED_PIN, LOW);
+
+  set_state("ready_to_launch");
+}
+
+/*###################################################################*/
+
+
+/*########################### LOOP ##################################*/
+
+void loop() {
+  String state = "transmit";    // Comment out for actual testing
+  //if(Serial1.available() > 0)
+  //{
+    //String state = String(Serial1.readString());
+    //set_state(state);
+    if(state == "transmit")
+    {
+      pl_state = "ready to launch";
+      sw_state = state + "ing";
+    }else if(state == "release")
+    {
+      pl_state = "releasing from canister";
+      sw_state = "releasing can-sat";
+    }else if(state == "deploy")
+    {
+      pl_state = "deploying gravity countermeasures";
+      sw_state = "doing something";
+    }else
+    {
+      pl_state = "done";
+      sw_state = "done";
+    }
+  //}
+  
+  if(transmit)
+  {
+    // Send data packet
+    packet_count++;
+    mission_time = millis()/1000;
+    voltage = analogRead(VOLTAGE_PIN) * (6.0/4095.0);
+    voltage = roundToPrecision(voltage, 1);
+    if(!BMPERROR)
+    {
+      altitude = roundToPrecision(bmp390.readAltitude(1016), 4);
+      pressure = roundToPrecision(bmp390.pressure / 100, 4);
+      temp = roundToPrecision(bmp390.temperature, 4);
+    }
+    if(!ZOEERROR && zoem8q.getFixType() > 2)
+    {
+      gps_latitude = roundToPrecision(zoem8q.getLatitude() / 10000000.0, 4);   // Latitude in degrees
+      gps_longitude = roundToPrecision(zoem8q.getLongitude() / 10000000.0, 4); // Longitude in degrees
+    }else
+    {
+      gps_latitude = 0.0;
+      gps_longitude = 0.0;
+    }
+    data = DATA_IND + "1004," + String(mission_time) +","+ String(packet_count) +","+ sw_state +","+ pl_state +","+ String(altitude) +","+ String(pressure) +","+ String(temp) +","+ String(voltage) +","+ String(gps_latitude) +","+ String(gps_longitude);
+    data_file.println(data); // Come back and strip the data_ind char
+    Serial1.println(data);
+    Serial.println(data);
+    delay(1000);
+  }
+  if(release && !released)
+  {
+    // Servo Code goes here
+    released = true;
+  }
+  if(deploy && !deployed)
+  {
+    // More servo code here
+    deployed = true;
+  }
+  if(landed)
+  {
+    data_file.println(BUZ_LED_PIN, HIGH);
+    if(!sd_closed)
+    {
+      data_file.close();
+    }
+    sd_closed = true;
+  }
+  
+}
+
+/*###################################################################*/
+
+
+/*##################### FUNCITON DEFINITIONS #######################*/
+
+String file_increment(const String base, const String ext)
+{
+  int index = 1;
+  String file_name = base + String(index) + ext;
+
+  while(SD.exists(file_name.c_str()))
+  {
+    index++;
+    file_name = base + String(index) + ext;
+  }
+  return file_name;
+}
+
+
+void init_sd()
+{
+  for (int i = 0; i < 10; i++)
+  {
+    if(!SD.begin(SD_CS_PIN))
+    {
+      Serial1.println(ERROR_IND + "SD card failed to connect. Attempt" + String(i));
+      Serial.println(ERROR_IND + "SD card failed to connect. Attempt" + String(i));
+      delay(1000);
+      i++;
+    }
+    if(i == 10)
+    {
+      Serial1.println(ERROR_IND + "SD card error, continuing without writing to csv");
+      Serial1.println(STATUS_IND + "SD card failure");
+      SDERROR = true;
+    }
+  } 
+  if(SD.begin(SD_CS_PIN))
+  {
+    Serial1.println(STATUS_IND + "SD card connection successful");
+    Serial.println(STATUS_IND + "SD card connection successful");
+  }
+}
+
+
+void init_bmp390()
+{
+  for (int i = 0; i < 10; i++)
+  {
+    if(!bmp390.begin_I2C())
+    {
+      Serial1.println(ERROR_IND + "BMP390 failed to connect. Attempt" + String(i));
+      Serial.println(STATUS_IND + "BMP390 failed to connect. Attempt");
+      delay(1000);
+      i++;
+    }
+    if(i == 10)
+    {
+      Serial1.println(ERROR_IND + "BMP390 error, continuing without BMP390 data");
+      Serial1.println(STATUS_IND + "BMP390 failure");
+      BMPERROR = true;
+      pressure = 0;
+      temp = 0;
+      altitude = 0;
+    }
+  } 
+  if(bmp390.begin_I2C(BMP390_ADDRESS))
+  {
+    // Set up BMP390 settings
+    bmp390.setTemperatureOversampling(BMP3_OVERSAMPLING_8X);
+    bmp390.setPressureOversampling(BMP3_OVERSAMPLING_4X);
+    bmp390.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);
+    bmp390.setOutputDataRate(BMP3_ODR_50_HZ);
+    Serial1.println(STATUS_IND + "BMP390 connection successful");
+    Serial.println(STATUS_IND + "BMP390 connection successful");
+  }
+}
+
+void init_zoem8q()
+{
+  for (int i = 0; i < 10; i++)
+  {
+    if(!zoem8q.begin())
+    {
+      Serial1.println(ERROR_IND + "ZOE-M8Q failed to connect. Attempt" + String(i));
+      delay(1000);
+      i++;
+    }
+    if(i == 10)
+    {
+      Serial1.println(ERROR_IND + "ZOE-M8Q error, continuing without ZOE-M8Q data");
+      Serial1.println(STATUS_IND + "ZOE-M8Q failure");
+      ZOEERROR = true;
+    }
+  } 
+  if(zoem8q.begin())
+  {
+    zoem8q.setI2COutput(COM_TYPE_UBX);
+    Serial1.println(STATUS_IND + "ZOE-M8Q connection successful");
+  }
+}
+
+float roundToPrecision(float value, int decimalPlaces)
+{
+  float scale = pow(10, decimalPlaces);
+  return round(value * scale) / scale;
+}
+
+void set_state(String state)
+{
+  if(state == "ready_to_launch")
+  {
+    Serial1.println(STATUS_IND + "READY TO LAUNCH");
+  }
+  if(state == "launch")
+  {
+    transmit = true;
+    release = false;
+    deploy = false;
+    landed = false;
+  }else if(state == "release")
+  {
+    transmit = true;
+    release = true;
+    deploy = false;
+    landed = false;
+  }else if(state == "deploy")
+  {
+    transmit = true;
+    release = false;
+    deploy = true;
+    landed = false;
+  }else if(state == "landed")
+  {
+    transmit = false;
+    release = false;
+    deploy = false;
+    landed = true;
+  }else
+  {
+    Serial.println("Error");
+  }
+}
+
+/*###################################################################*/
