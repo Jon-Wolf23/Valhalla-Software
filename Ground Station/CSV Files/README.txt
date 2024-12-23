@@ -1,1 +1,0 @@
-This folder is needed for the creation and opening of CSV files, otherwise you will have to change each instance this folder is referenced
