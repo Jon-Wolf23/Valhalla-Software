@@ -1,6 +1,3 @@
-# ValhallaSoft
-Software repo for the 2024 cansat two month team Valhalla
+# Valhalla Software
 
-Please do not abuse privlages
-
-Please do not invite unauthorized contributers
+This is the code for the Valhalla project described on my linkedln and handshake
